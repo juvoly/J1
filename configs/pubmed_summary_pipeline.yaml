@@ -1,0 +1,38 @@
+# Pipeline Configuration: PubMed Summarization
+
+dask_workers: 8
+
+loader:
+  class: j1.data_loaders.pubmed.PubMedDataLoader
+  params:
+    article_limit: 64
+    shard_size: 16
+    # Assuming the loader provides the 'body' column directly.
+    # Add any other necessary PubMedDataLoader params here (e.g., query)
+
+processors:
+  - class: j1.process.filters.DocumentSplitterProcessor
+    params:
+      text_key: body
+      min_chars: 500
+      max_chars: 8000
+      overlap_chars: 100
+
+  - class: j1.process.summarize.SummaryMapper
+    params:
+      input_column: body
+      output_column: summary
+      openai_model: Llama-4-Maverick-17B-128E-Instruct
+      openai_base_url: http://localhost:8000/v1
+      # openai_api_key: <your_key> # Better to use ENV var OPENAI_API_KEY
+      # max_concurrent_requests: 10 # Default, can be overridden
+
+  # Optional: Drop the original body column after summarization
+  # - class: j1.process.filters.FieldProcessor
+  #   params:
+  #     fields_to_drop:
+  #       - body
+
+output:
+  path: results/pubmed_summaries
+  format: parquet # Options: parquet, csv
