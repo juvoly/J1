@@ -71,7 +71,7 @@ class Pipeline:
         loader_instance = self.loader_class(**self.loader_params)
         print(f"Loading data using {self.config['loader']['class']}...")
         df = await loader_instance.to_dask_dataframe()
-        print("Data loading complete.")
+        print(f"Loading complete. DataFrame has {df.npartitions} partitions.")
         return df
 
     def _process_data(self, df: dd.DataFrame) -> dd.DataFrame:

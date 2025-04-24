@@ -19,13 +19,13 @@ async def _apply_openai_prompt_partition(
     partition: pd.DataFrame,
     input_columns: List[str],
     output_columns: List[str],
-    system_prompt: str,
     user_prompt_template: str,
     openai_model: str,
     openai_api_key: str,
     openai_kwargs: Dict[str, Any],
     max_concurrent_requests: int,
     extract_content_func: Callable[[str], Dict[str, Any]],
+    get_system_prompt_func: Callable[[pd.Series], str],
     openai_base_url: Optional[str] = None,
 ) -> pd.DataFrame:
     """
@@ -46,6 +46,7 @@ async def _apply_openai_prompt_partition(
         try:
             prompt_data = {col: row[col] for col in input_columns}
             user_prompt = user_prompt_template.format(**prompt_data)
+            system_prompt = get_system_prompt_func(row)
 
             async with semaphore:
                 response = await client.chat.completions.create(
@@ -110,8 +111,8 @@ class PromptMapper(Processor, ABC):
         self,
         input_columns: List[str],
         output_columns: List[str],
-        system_prompt: str,
         user_prompt_template: str,
+        system_prompt: Optional[str] = None,
         openai_model: str = "gpt-4o-mini",
         openai_api_key: Optional[str] = None,
         openai_kwargs: Optional[Dict[str, Any]] = None,
@@ -123,9 +124,9 @@ class PromptMapper(Processor, ABC):
         Args:
             input_columns: List of input column names required for user_prompt_template.
             output_columns: List of new column names for the extracted OpenAI response parts.
-            system_prompt: System prompt content.
             user_prompt_template: f-string template for user prompt. All placeholders
                                   (e.g., {col_name}) must exist in input_columns.
+            system_prompt: Optional static system prompt. If None, generate_system_prompt will be used.
             openai_model: OpenAI model identifier.
             openai_api_key: OpenAI API key (or reads OPENAI_API_KEY env var).
             openai_kwargs: Additional kwargs for OpenAI API call.
@@ -137,9 +138,6 @@ class PromptMapper(Processor, ABC):
             raise ValueError("input_columns list cannot be empty.")
         if not output_columns:
              raise ValueError("output_columns list cannot be empty.")
-        # Allow empty system prompt (just warn)
-        if not system_prompt:
-            logger.warning("system_prompt is empty.")
         if not user_prompt_template:
             raise ValueError("user_prompt_template cannot be empty.")
         if max_concurrent_requests <= 0:
@@ -149,8 +147,8 @@ class PromptMapper(Processor, ABC):
 
         self.input_columns = input_columns
         self.output_columns = output_columns
-        self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
+        self.static_system_prompt = system_prompt
         self.openai_model = openai_model
         self.openai_kwargs = openai_kwargs or {}
         self.openai_kwargs['max_tokens'] = max_tokens
@@ -177,6 +175,29 @@ class PromptMapper(Processor, ABC):
              raise ValueError(str(e)) from e # Raise ValueError for consistency
         except Exception as e:
              raise ValueError(f"Error validating user_prompt_template syntax: {e}") from e
+
+    def get_system_prompt(self, row: pd.Series) -> str:
+        """
+        Gets the system prompt for a given row. If a static system prompt was provided,
+        returns that. Otherwise, calls generate_system_prompt.
+        """
+        if self.static_system_prompt is not None:
+            return self.static_system_prompt
+        return self.generate_system_prompt(row)
+
+    def generate_system_prompt(self, row: pd.Series) -> str:
+        """
+        Generates the system prompt based on the input row data.
+        Subclasses must implement this method to define how the system prompt
+        is generated for each row when no static system prompt is provided.
+
+        Args:
+            row: A pandas Series containing the input data for the current row.
+
+        Returns:
+            A string containing the system prompt.
+        """
+        raise NotImplementedError("Subclasses must implement this method.")
 
     @abstractmethod
     def extract_content(self, response_content: str) -> Dict[str, Any]:
@@ -216,13 +237,13 @@ class PromptMapper(Processor, ABC):
                         partition=partition,
                         input_columns=self.input_columns,
                         output_columns=self.output_columns,
-                        system_prompt=self.system_prompt,
                         user_prompt_template=self.user_prompt_template,
                         openai_model=self.openai_model,
                         openai_api_key=self.openai_api_key,
                         openai_kwargs=self.openai_kwargs,
                         max_concurrent_requests=self.max_concurrent_requests,
                         extract_content_func=self.extract_content,
+                        get_system_prompt_func=self.get_system_prompt,
                         openai_base_url=self.openai_base_url,
                     )
                 )
@@ -238,9 +259,6 @@ class PromptMapper(Processor, ABC):
         )
 
         # Ensure final output columns have consistent dtype, converting object if possible
-        # This might be tricky if extract_content returns non-strings.
-        # Let's convert to string for now, subclasses might need to override process
-        # or handle dtypes more carefully if necessary.
         for col in self.output_columns:
              if col in result_df.columns: # Check if column exists (could fail in empty partitions?)
                  result_df[col] = result_df[col].astype(str)
@@ -270,8 +288,8 @@ class SimplePromptMapper(PromptMapper):
         super().__init__(
             input_columns=input_columns,
             output_columns=[output_column],
-            system_prompt=system_prompt,
             user_prompt_template=user_prompt_template,
+            system_prompt=system_prompt,
             openai_model=openai_model,
             openai_api_key=openai_api_key,
             openai_kwargs=openai_kwargs,

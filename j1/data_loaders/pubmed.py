@@ -12,6 +12,8 @@ import aiofiles
 import aiohttp
 from bs4 import BeautifulSoup
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+import pandas as pd
+import dask.dataframe as dd
 
 from .base import BaseDataLoader
 
@@ -107,7 +109,8 @@ class PubMedDataLoader(BaseDataLoader):
             concurrency: Number of concurrent downloads.
             article_limit: Maximum number of articles to process.
         """
-        super().__init__(shard_size)
+        super().__init__()
+        self.shard_size = shard_size
         self.concurrency = concurrency
         self.article_limit = article_limit
         self._processed_count = 0
@@ -212,6 +215,7 @@ class PubMedDataLoader(BaseDataLoader):
         semaphore = asyncio.Semaphore(self.concurrency)
         connector = aiohttp.TCPConnector(limit_per_host=self.concurrency)
         
+        current_shard = []
         async with aiohttp.ClientSession(connector=connector) as session:
             file_list = await self._get_ftp_file_list(session)
             if not file_list:
@@ -227,4 +231,13 @@ class PubMedDataLoader(BaseDataLoader):
                         break
                     
                     async for doc in self._process_archive(session, url, filename, temp_path, semaphore):
-                        yield doc 
+                        current_shard.append(doc)
+                        
+                        # If we've reached the shard size, yield the shard as a dask DataFrame
+                        if len(current_shard) >= self.shard_size:
+                            yield dd.from_pandas(pd.DataFrame(current_shard), npartitions=1)
+                            current_shard = []
+                
+                # Yield any remaining documents in the last shard
+                if current_shard:
+                    yield dd.from_pandas(pd.DataFrame(current_shard), npartitions=1) 
