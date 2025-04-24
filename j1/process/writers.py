@@ -40,36 +40,43 @@ class DataWriter(ABC):
         Args:
             df: Input dask dataframe
         """
-        def write_partition(partition: pd.DataFrame) -> pd.DataFrame:
-            """Write a partition to the output file.
+        def process_partition(partition: pd.DataFrame) -> List[str]:
+            """Process a partition and return JSONL strings.
             
             Args:
                 partition: A pandas DataFrame partition
                 
             Returns:
-                The input partition (unchanged)
+                List of JSONL strings
             """
-            # Convert each row to JSONL and write to file
-            with open(self.output_path, 'a') as f:
-                for _, row in partition.iterrows():
-                    try:
-                        jsonl_str = self._convert_to_jsonl(row)
-                        f.write(jsonl_str + '\n')
-                    except Exception as e:
-                        print(f"Error processing row: {e}")
-                        continue
-            return partition
+            jsonl_strings = []
+            for _, row in partition.iterrows():
+                try:
+                    jsonl_str = self._convert_to_jsonl(row)
+                    jsonl_strings.append(jsonl_str)
+                except Exception as e:
+                    print(f"Error processing row: {e}")
+                    continue
+            return jsonl_strings
+
+        # Process all partitions and collect results
+        all_jsonl = df.map_partitions(
+            process_partition,
+            meta=pd.Series(dtype='object'),  # Metadata for the list of strings
+            enforce_metadata=False
+        ).compute()
+
+        # Flatten the list of lists
+        all_jsonl = [item for sublist in all_jsonl for item in sublist]
 
         # Clear the output file if it exists
         if os.path.exists(self.output_path):
             os.remove(self.output_path)
 
-        # Apply the write operation to each partition
-        df.map_partitions(
-            write_partition,
-            meta=pd.DataFrame(columns=df.columns),  # Provide metadata for Dask
-            enforce_metadata=False  # Don't enforce metadata as we're just writing
-        ).compute()
+        # Write all JSONL strings to the file
+        with open(self.output_path, 'w') as f:
+            for jsonl_str in all_jsonl:
+                f.write(jsonl_str + '\n')
 
 
 class QASFTDataWriter(DataWriter):
@@ -135,51 +142,63 @@ class QASFTDataWriter(DataWriter):
         return json.dumps(conversation)
 
     def write(self, df: dd.DataFrame):
-        """Write the dataframe to train and validation JSONL files in parallel.
+        """Write the dataframe to train and validation JSONL files.
         
         Args:
             df: Input dask dataframe
         """
-        def write_partition(partition: pd.DataFrame) -> pd.DataFrame:
-            """Write a partition to train and validation files.
+        def process_partition(partition: pd.DataFrame) -> Tuple[List[str], List[str]]:
+            """Process a partition and return train and validation JSONL strings.
             
             Args:
                 partition: A pandas DataFrame partition
                 
             Returns:
-                The input partition (unchanged)
+                Tuple of (train_jsonl_strings, val_jsonl_strings)
             """
-            # Clear files if this is the first partition
-            if partition.index[0] == 0:
-                for path in [self.train_path, self.val_path]:
-                    if os.path.exists(path):
-                        os.remove(path)
+            train_jsonl = []
+            val_jsonl = []
             
-            # Write each row to either train or validation file
-            with open(self.train_path, 'a') as train_f, open(self.val_path, 'a') as val_f:
-                for _, row in partition.iterrows():
-                    try:
-                        jsonl_str = self._convert_to_jsonl(row)
-                        # Randomly assign to train or validation
-                        if random.random() < self.validation_split:
-                            val_f.write(jsonl_str + '\n')
-                        else:
-                            train_f.write(jsonl_str + '\n')
-                    except Exception as e:
-                        print(f"Error processing row: {e}")
-                        continue
-            return partition
+            for _, row in partition.iterrows():
+                try:
+                    jsonl_str = self._convert_to_jsonl(row)
+                    # Randomly assign to train or validation
+                    if random.random() < self.validation_split:
+                        val_jsonl.append(jsonl_str)
+                    else:
+                        train_jsonl.append(jsonl_str)
+                except Exception as e:
+                    print(f"Error processing row: {e}")
+                    continue
+                    
+            return train_jsonl, val_jsonl
 
-        # Apply the write operation to each partition
-        df.map_partitions(
-            write_partition,
-            meta=pd.DataFrame(columns=df.columns),  # Provide metadata for Dask
-            enforce_metadata=False  # Don't enforce metadata as we're just writing
+        # Process all partitions and collect results
+        all_results = df.map_partitions(
+            process_partition,
+            meta=pd.Series(dtype='object'),  # Metadata for the tuple of lists
+            enforce_metadata=False
         ).compute()
+
+        # Separate and flatten train and validation results
+        train_jsonl = [item for sublist in [r[0] for r in all_results] for item in sublist]
+        val_jsonl = [item for sublist in [r[1] for r in all_results] for item in sublist]
+
+        # Clear existing files
+        for path in [self.train_path, self.val_path]:
+            if os.path.exists(path):
+                os.remove(path)
+
+        # Write train and validation files
+        with open(self.train_path, 'w') as train_f, open(self.val_path, 'w') as val_f:
+            for jsonl_str in train_jsonl:
+                train_f.write(jsonl_str + '\n')
+            for jsonl_str in val_jsonl:
+                val_f.write(jsonl_str + '\n')
         
         # Print statistics
-        train_count = sum(1 for _ in open(self.train_path))
-        val_count = sum(1 for _ in open(self.val_path))
+        train_count = len(train_jsonl)
+        val_count = len(val_jsonl)
         total = train_count + val_count
         print(f"Split complete: {train_count} train samples ({train_count/total:.1%}), "
               f"{val_count} validation samples ({val_count/total:.1%})") 
