@@ -1,7 +1,7 @@
 import asyncio
 import importlib
 import time
-from typing import Any, Dict, List, Type
+from typing import Any, Dict, List, Type, Optional
 
 import dask.dataframe as dd
 from dask.distributed import Client, LocalCluster
@@ -9,6 +9,7 @@ from dask.diagnostics import ProgressBar
 
 from j1.data_loaders.base import BaseDataLoader
 from j1.process.base import Processor
+from j1.process.writers import DataWriter
 
 
 def _import_class(class_path: str) -> Type:
@@ -37,7 +38,10 @@ class Pipeline:
             config: The pipeline configuration. Expected keys:
                 - loader: Dict with 'class' (path) and 'params' (dict).
                 - processors: List of dicts, each with 'class' (path) and 'params' (dict).
-                - output: Dict with 'path' (str) and optional 'format' (str, default 'parquet').
+                - output: Dict with:
+                    - path: str (required)
+                    - format: str (optional, default 'parquet')
+                    - writer: Dict with 'class' (path) and 'params' (dict) (optional)
                 - dask_workers: Optional int, number of Dask workers.
         """
         self.config = config
@@ -56,6 +60,13 @@ class Pipeline:
         self.output_path: str = self.config['output']['path']
         self.output_format: str = self.config['output'].get('format', 'parquet')
         self.dask_workers: int | None = self.config.get('dask_workers')
+
+        # Initialize writer if specified
+        self.writer: Optional[DataWriter] = None
+        if 'writer' in self.config['output']:
+            writer_class = _import_class(self.config['output']['writer']['class'])
+            writer_params = self.config['output']['writer'].get('params', {})
+            self.writer = writer_class(**writer_params)
 
     def _validate_config(self):
         """Basic validation of the configuration structure."""
@@ -88,16 +99,21 @@ class Pipeline:
 
     def _save_data(self, df: dd.DataFrame):
         """Save the processed dataframe."""
-        print(f"Saving results to {self.output_path} (format: {self.output_format})...")
-        with ProgressBar():
-            if self.output_format == 'parquet':
-                df.to_parquet(self.output_path)
-            elif self.output_format == 'csv':
-                # Note: Saving to single CSV might be slow/memory intensive for large data
-                df.to_csv(self.output_path, single_file=True, index=False)
-            else:
-                raise ValueError(f"Unsupported output format: {self.output_format}")
-        print("Saving complete.")
+        if self.writer:
+            print(f"Writing data using {self.writer.__class__.__name__}...")
+            self.writer.write(df)
+            print("Writing complete.")
+        else:
+            print(f"Saving results to {self.output_path} (format: {self.output_format})...")
+            with ProgressBar():
+                if self.output_format == 'parquet':
+                    df.to_parquet(self.output_path)
+                elif self.output_format == 'csv':
+                    # Note: Saving to single CSV might be slow/memory intensive for large data
+                    df.to_csv(self.output_path, single_file=True, index=False)
+                else:
+                    raise ValueError(f"Unsupported output format: {self.output_format}")
+            print("Saving complete.")
 
     async def run(self):
         """Execute the entire pipeline: load, process, save."""

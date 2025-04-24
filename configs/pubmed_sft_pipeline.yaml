@@ -1,0 +1,22 @@
+# Pipeline Configuration: PubMed SFT Dataset Generation
+
+dask_workers: 8
+
+loader:
+  class: j1.data_loaders.local.LocalDataLoader
+  params:
+    path: results/pubmed_qa
+    format: parquet
+
+# No processors needed as we're just converting the existing QA pairs to SFT format
+
+output:
+  path: results/pubmed_sft # Still required for compatibility
+  writer:
+    class: j1.process.writers.QASFTDataWriter
+    params:
+      output_path: results/pubmed_sft.jsonl
+      question_column: question
+      answer_column: answer
+      validation_split: 0.001
+      seed: 42 # For reproducibility
