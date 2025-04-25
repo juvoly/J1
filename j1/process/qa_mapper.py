@@ -49,7 +49,10 @@ class QAPromptMapper(PromptMapper):
             raise ValueError("max_options must be greater than or equal to min_options")
         if max_options > 6:
             raise ValueError("max_options cannot exceed 6")
-
+        if openai_kwargs is None:
+            openai_kwargs = {}
+        if "timeout" not in openai_kwargs:
+            openai_kwargs["timeout"] = 300
         super().__init__(
             input_columns=[input_column],
             output_columns=["question", "answer"],
@@ -272,6 +275,11 @@ class PatientCaseMapper(PromptMapper):
             raise ValueError("max_options cannot exceed 6")
         if not 0 <= mcq_probability <= 1:
             raise ValueError("mcq_probability must be between 0 and 1")
+
+        if openai_kwargs is None:
+            openai_kwargs = {}
+        if "timeout" not in openai_kwargs:
+            openai_kwargs["timeout"] = 300
 
         super().__init__(
             input_columns=[input_column],
