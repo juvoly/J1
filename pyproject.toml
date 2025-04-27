@@ -10,6 +10,8 @@ authors = [
     {name = "Your Name", email = "your.email@example.com"},
 ]
 dependencies = [
+    "tabulate",
+    "python-dotenv",
     "pandas>=2.0.0",
     "dask[distributed]>=2023.0.0",
     "aiohttp>=3.8.0",

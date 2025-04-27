@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Callable
 
@@ -43,33 +44,40 @@ async def _apply_openai_prompt_partition(
 
     async def process_row(row: pd.Series):
         """Processes a single row asynchronously, respecting the semaphore."""
-        try:
-            prompt_data = {col: row[col] for col in input_columns}
-            user_prompt = user_prompt_template.format(**prompt_data)
-            system_prompt = get_system_prompt_func(row)
+        base_delay = 1  # Start with 1 second delay
+        max_delay = 60  # Maximum delay of 60 seconds
+        attempt = 0
 
-            async with semaphore:
-                response = await client.chat.completions.create(
-                    model=openai_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    **openai_kwargs,
-                )
-            content = response.choices[0].message.content
+        while True:  # Keep retrying indefinitely
+            try:
+                prompt_data = {col: row[col] for col in input_columns}
+                user_prompt = user_prompt_template.format(**prompt_data)
+                system_prompt = get_system_prompt_func(row)
+                print(f"System prompt: {user_prompt}")
+                async with semaphore:
+                    response = await client.chat.completions.create(
+                        model=openai_model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        **openai_kwargs,
+                    )
+                content = response.choices[0].message.content
 
-            extracted_content = content or "" # Return raw content (or empty string if None)
-            return extracted_content
-        except OpenAIError as e:
-            logger.error(f"OpenAI API error: {e}")
-            return f"Error: OpenAI API - {e}"
-        except KeyError as e:
-            logger.error(f"Missing key '{e}' for formatting prompt")
-            return "Error: Missing template key"
-        except Exception as e:
-            logger.exception(f"Unexpected error: {e}")
-            return f"Error: Unexpected - {e}"
+                extracted_content = content or "" # Return raw content (or empty string if None)
+                return extracted_content
+            except OpenAIError as e:
+                attempt += 1
+                delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+                logger.warning(f"OpenAI API error (attempt {attempt}): {e}. Retrying in {delay} seconds...")
+                await asyncio.sleep(delay)
+            except KeyError as e:
+                logger.error(f"Missing key '{e}' for formatting prompt")
+                return "Error: Missing template key"
+            except Exception as e:
+                logger.exception(f"Unexpected error: {e}")
+                return f"Error: Unexpected - {e}"
 
     tasks = [process_row(row) for _, row in partition.iterrows()]
     raw_results_list = await asyncio.gather(*tasks) # List of raw content strings or error messages

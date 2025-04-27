@@ -15,7 +15,7 @@ processors:
       openai_model: Llama-4-Maverick-17B-128E-Instruct
       openai_base_url: http://localhost:8000/v1
       openai_api_key: x # Better to use ENV var OPENAI_API_KEY
-      max_concurrent_requests: 256 # Default, can be overridden
+      max_concurrent_requests: 5 # Default, can be overridden
       mcq_probability: 0.5 # 50% chance of generating multiple choice questions
 
 output:

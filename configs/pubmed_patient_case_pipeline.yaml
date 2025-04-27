@@ -9,16 +9,18 @@ loader:
     format: parquet
 
 processors:
-  - class: j1.process.qa_mapper.PatientCaseMapper
+  - class: j1.process.qa_mapper.PatientMapper
     params:
       input_column: summary
       openai_model: Llama-4-Maverick-17B-128E-Instruct
-      openai_base_url: http://localhost:8000/v1
+      openai_base_url: http://localhost:30000/v1
       openai_api_key: x # Better to use ENV var OPENAI_API_KEY
-      max_concurrent_requests: 256 # Default, can be overridden
-      mcq_probability: 0.5 # 50% chance of generating multiple choice questions
-      min_options: 2 # Minimum number of options for MCQ
-      max_options: 6 # Maximum number of options for MCQ
+      max_concurrent_requests: 10
+      min_options: 2
+      max_options: 6
+      n_repetitions: 2
+      openai_kwargs:
+        max_tokens: 6000
 
 output:
   path: results/pubmed_patient_case

@@ -1,0 +1,134 @@
+# Medical QA Evaluation Configuration
+
+# Type of benchmark to run
+benchmark_type: "medqa" # or "pubmedqa"
+
+# List of models to evaluate
+models:
+  # - label: "GPT-4 Mini (CoT)" # Display name for the model
+  #   model: "gpt-4o-mini" # Actual model name to use
+  #   api_base: "https://api.openai.com/v1"
+  #   api_key: "${OPENAI_API_KEY}"
+  #   max_concurrent_requests: 5
+  #   params:
+  #     temperature: 0.0
+  #     max_tokens: 1000
+  #   use_chain_of_thought: true # Enable chain of thought reasoning
+
+  # - label: "GPT-4 Mini" # Display name for the model
+  #   model: "gpt-4o-mini" # Actual model name to use
+  #   api_base: "https://api.openai.com/v1"
+  #   api_key: "${OPENAI_API_KEY}"
+  #   max_concurrent_requests: 5
+  #   params:
+  #     temperature: 0.0
+  #     max_tokens: 10
+  #   use_chain_of_thought: false # Disable chain of thought reasoning
+
+  # - label: "Claude 3.7"
+  #   model: "claude-3-7-sonnet-20250219"
+  #   api_base: "https://api.anthropic.com/v1"
+  #   api_key: "${ANTHROPIC_API_KEY}"
+  #   max_concurrent_requests: 5
+  #   use_chain_of_thought: false
+  #   params:
+  #     temperature: 0.0
+  #     max_tokens: 1000
+  # - label: "GPT-4o" # Display name for the model
+  #   model: "gpt-4o" # Actual model name to use
+  #   api_base: "https://api.openai.com/v1"
+  #   api_key: "${OPENAI_API_KEY}"
+  #   max_concurrent_requests: 5
+  #   params:
+  #     temperature: 0.0
+  #     max_tokens: 10
+  #   use_chain_of_thought: false # Disable chain of thought reasoning
+
+  # - label: "GPT-4.1" # Display name for the model
+  #   model: "gpt-4.1" # Actual model name to use
+  #   api_base: "https://api.openai.com/v1"
+  #   api_key: "${OPENAI_API_KEY}"
+  #   max_concurrent_requests: 5
+  #   params:
+  #     temperature: 0.0
+  #     max_tokens: 100
+  #   use_chain_of_thought: false # Disable chain of thought reasoning
+
+  # - label: "Gemini 2.0 Flash"
+  #   model: "gemini-2.0-flash"
+  #   api_base: "https://generativelanguage.googleapis.com/v1beta/openai"
+  #   api_key: "${GEMINI_API_KEY}"
+  #   max_concurrent_requests: 5
+  #   params:
+  #     temperature: 0.0
+  #     max_tokens: 200
+  #   use_chain_of_thought: false
+
+  # - label: "Gemini 1.5 Pro"
+  #   model: "gemini-1.5-pro"
+  #   api_base: "https://generativelanguage.googleapis.com/v1beta/openai"
+  #   api_key: "${GEMINI_API_KEY}"
+  #   max_concurrent_requests: 5
+  #   params:
+  #     temperature: 0.0
+  #     max_tokens: 10
+  #   use_chain_of_thought: false
+
+  # - label: "Gemini 2.0 Flash (CoT)"
+  #   model: "gemini-2.0-flash"
+  #   api_base: "https://generativelanguage.googleapis.com/v1beta/openai"
+  #   api_key: "${GEMINI_API_KEY}"
+  #   max_concurrent_requests: 5
+  #   params:
+  #     temperature: 0.0
+  #     max_tokens: 1000
+  #   use_chain_of_thought: true
+
+  # # - label: "Claude 3.7 (Custom Prompt)"
+  # #   model: "claude-3-7-sonnet-20250219"
+  # #   api_base: "https://api.anthropic.com/v1"
+  # #   api_key: "${ANTHROPIC_API_KEY}"
+  # #   max_concurrent_requests: 5
+  # #   use_chain_of_thought: false
+  # #   custom_prompt: |
+  # #     {question}
+
+  # #     Options:
+  # #     {options}
+
+  # #     Answer:
+
+  # - label: "Llama 4 Maverick 17B"
+  #   model: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
+  #   api_base: "https://api.together.xyz/v1"
+  #   api_key: "${TOGETHER_API_KEY}"
+  #   max_concurrent_requests: 5
+  #   use_chain_of_thought: false
+  #   params:
+  #     temperature: 0.0
+  #     max_tokens: 1000
+
+  # - label: "Mistral Small"
+  #   model: "mistralai/Mistral-Small-24B-Instruct-2501"
+  #   api_base: "https://api.together.xyz/v1"
+  #   api_key: "${TOGETHER_API_KEY}"
+  #   max_concurrent_requests: 5
+  #   use_chain_of_thought: false
+  #   params:
+  #     temperature: 0.0
+  #     max_tokens: 1000
+
+  - label: "J1"
+    model: "J1"
+    api_base: "http://localhost:8000/v1"
+    api_key: "@"
+    max_concurrent_requests: 100
+    use_chain_of_thought: false
+    params:
+      temperature: 0.6
+      max_tokens: 4000
+# Path to the JSON dataset file
+dataset_path: "data/medqa.jsonl"
+
+# Optional: Limit the number of evaluations
+limit: 1000 # Set to null or remove to evaluate all items

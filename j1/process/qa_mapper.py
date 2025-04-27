@@ -1,240 +1,18 @@
 import random
-from typing import Dict, Any, List, Optional
+import logging
+from typing import Dict, Any, List, Optional, Tuple
 
 import pandas as pd
-from j1.process.mappers import PromptMapper
+from j1.process.base import Processor
 
-class QAPromptMapper(PromptMapper):
+logger = logging.getLogger(__name__)
+
+class PatientMapper(Processor):
     """
-    A PromptMapper that generates questions and answers based on input text.
-    With a 50% probability, it will generate either a multiple choice question
-    or an open-ended question.
-    """
-
-    def __init__(
-        self,
-        input_column: str,
-        system_prompt: Optional[str] = None,
-        openai_model: str = "gpt-4o-mini",
-        openai_api_key: str = None,
-        openai_kwargs: Dict[str, Any] = None,
-        max_concurrent_requests: int = 10,
-        max_tokens: int = 1000,
-        openai_base_url: str = None,
-        mcq_probability: float = 0.5,
-        min_options: int = 2,
-        max_options: int = 6,
-    ):
-        """
-        Initialize the QAPromptMapper.
-
-        Args:
-            input_columns: List of input column names containing the text to generate questions from.
-            system_prompt: Optional static system prompt. If None, will generate dynamic prompts.
-            openai_model: OpenAI model identifier.
-            openai_api_key: OpenAI API key.
-            openai_kwargs: Additional kwargs for OpenAI API call.
-            max_concurrent_requests: Maximum concurrent OpenAI requests per partition.
-            max_tokens: Maximum number of tokens to generate in the response.
-            openai_base_url: Custom base URL for OpenAI API.
-            mcq_probability: Probability of generating a multiple choice question (default: 0.5).
-            min_options: Minimum number of options for multiple choice questions (default: 2).
-            max_options: Maximum number of options for multiple choice questions (default: 6).
-        """
-        if not 0 <= mcq_probability <= 1:
-            raise ValueError("mcq_probability must be between 0 and 1")
-        if min_options < 2:
-            raise ValueError("min_options must be at least 2")
-        if max_options < min_options:
-            raise ValueError("max_options must be greater than or equal to min_options")
-        if max_options > 6:
-            raise ValueError("max_options cannot exceed 6")
-        if openai_kwargs is None:
-            openai_kwargs = {}
-        if "timeout" not in openai_kwargs:
-            openai_kwargs["timeout"] = 300
-        super().__init__(
-            input_columns=[input_column],
-            output_columns=["question", "answer"],
-            user_prompt_template=f"Generate a question and answer based on the following text: {{{input_column}}}",
-            system_prompt=system_prompt,
-            openai_model=openai_model,
-            openai_api_key=openai_api_key,
-            openai_kwargs=openai_kwargs,
-            max_concurrent_requests=max_concurrent_requests,
-            max_tokens=max_tokens,
-            openai_base_url=openai_base_url,
-        )
-        self.mcq_probability = mcq_probability
-        self.min_options = min_options
-        self.max_options = max_options
-
-    def generate_system_prompt(self, row: pd.Series) -> str:
-        """
-        Generates a system prompt that instructs the model to create either
-        a multiple choice question or an open-ended question based on probability.
-        Only used if no static system prompt was provided.
-        """
-        if random.random() < self.mcq_probability:
-            num_options = random.randint(self.min_options, self.max_options)
-            option_letters = [chr(65 + i) for i in range(num_options)]  # A, B, C, etc.
-            option_template = "\n".join([f"{letter}) [option {letter}]" for letter in option_letters])
-            
-            return f"""You are an expert question generator specializing in creating challenging and thought-provoking multiple choice questions. 
-            Generate a multiple choice question with {num_options} options ({', '.join(option_letters)}) based on the provided text. 
-            
-            Guidelines:
-            1. Focus on broader concepts, principles, and implications rather than specific study details
-            2. The question should test deep understanding and critical thinking about general medical concepts
-            3. Include one correct answer and {num_options-1} plausible but incorrect options
-            4. Each option should be well-reasoned and require careful consideration
-            5. The correct answer should not be immediately obvious
-            6. Consider including options that test common misconceptions
-            7. NEVER use specific study details or results - focus on general medical principles
-            8. Ensure the question can be understood without needing to see the original text
-            9. The question should be about general medical knowledge and principles
-            10. Avoid referencing specific studies, numbers, or experimental details
-            
-            Format your response EXACTLY as follows:
-            ```markdown
-            Question: [question text]
-
-            {option_template}
-
-            Reasoning:
-            [Provide a detailed reasoning dialogue that:
-            1. Starts with the key concepts from the question
-            2. Discusses why each option is plausible or not
-            3. Explains the thought process step by step
-            4. Considers different aspects of the problem
-            5. Builds a logical argument that leads to the answer
-            The reasoning should be a natural dialogue that demonstrates critical thinking]
-
-            Answer: [correct option letter]
-            Explanation: [brief explanation of why this is the correct answer]
-            ```
-            """
-        else:
-            return """You are an expert question generator specializing in creating thought-provoking open-ended questions. 
-            Generate an open-ended question based on the provided text that encourages deep analysis and reasoning about general medical principles.
-            
-            Guidelines:
-            1. Focus on broader concepts, principles, and implications rather than specific study details
-            2. The question should require more than just factual recall
-            3. Encourage critical thinking about general medical principles
-            4. Consider asking about implications, relationships, or patterns in medical practice
-            5. The question should be challenging but answerable based on general medical knowledge
-            6. NEVER use specific study details or results - focus on general medical principles
-            7. Ensure the question can be understood without needing to see the original text
-            8. The question should be about general medical knowledge and principles
-            9. Avoid referencing specific studies, numbers, or experimental details
-            10. Focus on understanding underlying concepts and their clinical implications
-            
-            Format your response EXACTLY as follows:
-            ```markdown
-            Question: [question text]
-
-            Reasoning:
-            [Provide a detailed reasoning dialogue that:
-            1. Starts with the key concepts from the question
-            2. Discusses the relevant principles and implications
-            3. Explains the thought process step by step
-            4. Considers different aspects of the problem
-            5. Builds a logical argument that leads to the answer
-            The reasoning should be a natural dialogue that demonstrates critical thinking]
-
-            Answer: [detailed answer that includes reasoning and explanation]
-            Explanation: [comprehensive explanation using only general medical knowledge]
-            ```
-            """
-
-    def extract_content(self, response_content: str) -> Dict[str, Any]:
-        """
-        Extracts the question and answer from the OpenAI response.
-        Handles both multiple choice and open-ended question formats.
-        Returns a dictionary with empty strings if there's an error in extraction.
-        """
-        try:
-            # Split the response into lines and clean them
-            lines = [line.strip() for line in response_content.split('\n') if line.strip()]
-            
-            question = None
-            options = []
-            reasoning = None
-            answer = None
-            explanation = None
-            current_section = None
-            
-            for i, line in enumerate(lines):
-                if line.startswith('Question:'):
-                    current_section = 'question'
-                    question = line.replace('Question:', '').strip()
-                    continue
-                elif line.startswith('Reasoning:'):
-                    current_section = 'reasoning'
-                    reasoning = line.replace('Reasoning:', '').strip()
-                    continue
-                elif line.startswith('Answer:'):
-                    current_section = 'answer'
-                    answer = line.replace('Answer:', '').strip()
-                    continue
-                elif line.startswith('Explanation:'):
-                    current_section = 'explanation'
-                    explanation = line.replace('Explanation:', '').strip()
-                    continue
-                
-                if current_section == 'question':
-                    # Check if this line is part of the question or an option
-                    if any(line.startswith(f"{chr(65 + i)})") for i in range(26)):
-                        options.append(line)
-                    elif not question:  # If we haven't found the question yet
-                        question = line
-                elif current_section == 'reasoning' and not reasoning:
-                    reasoning = line
-                elif current_section == 'answer' and not answer:
-                    answer = line
-                elif current_section == 'explanation' and not explanation:
-                    explanation = line
-            
-            # Ensure we have at least a question and answer
-            if not question:
-                question = ""
-            if not answer:
-                answer = ""
-            
-            # Validate answer format for MCQ
-            if options:
-                # Check if answer is a valid option letter
-                answer_letter = answer.strip().upper()
-                valid_letters = [chr(65 + i) for i in range(len(options))]
-                if answer_letter not in valid_letters:
-                    answer = options[0]  # Use first option as fallback
-            
-            # If we found options, format them into the question
-            if options:
-                question = f"{question}\n" + "\n".join(options)
-            
-            # Combine reasoning, answer, and explanation in the correct order
-            final_answer = []
-            if reasoning:
-                final_answer.append(f"Reasoning: {reasoning}")
-            final_answer.append(f"Answer: {answer}")
-            if explanation:
-                final_answer.append(f"Explanation: {explanation}")
-            
-            result = {
-                "question": question,
-                "answer": "\n\n".join(final_answer)
-            }
-            
-            return result
-        except Exception as e:
-            return {"question": "", "answer": ""}
-
-class PatientCaseMapper(PromptMapper):
-    """
-    A PromptMapper that generates patient case scenarios based on input text.
-    Each case includes a patient presentation, relevant history, and key findings.
+    A Processor that generates patient case scenarios in three steps:
+    1. Generate a patient case with demographics
+    2. Generate a multiple choice question based on the case
+    3. Generate chain-of-thought reasoning for the answer
     """
 
     def __init__(
@@ -249,10 +27,11 @@ class PatientCaseMapper(PromptMapper):
         openai_base_url: str = None,
         min_options: int = 2,
         max_options: int = 6,
-        mcq_probability: float = 0.5,
+        n_repetitions: int = 1,
+        samples_per_partition: int = 10,
     ):
         """
-        Initialize the PatientCaseMapper.
+        Initialize the PatientMapper.
 
         Args:
             input_column: Name of the input column containing the text to generate cases from.
@@ -265,7 +44,8 @@ class PatientCaseMapper(PromptMapper):
             openai_base_url: Custom base URL for OpenAI API.
             min_options: Minimum number of options for multiple choice questions (default: 2).
             max_options: Maximum number of options for multiple choice questions (default: 6).
-            mcq_probability: Probability of generating a multiple choice question (default: 0.5).
+            n_repetitions: Number of different cases to generate per input row (default: 1).
+            samples_per_partition: Number of samples to take from each partition (default: 10).
         """
         if min_options < 2:
             raise ValueError("min_options must be at least 2")
@@ -273,260 +53,420 @@ class PatientCaseMapper(PromptMapper):
             raise ValueError("max_options must be greater than or equal to min_options")
         if max_options > 6:
             raise ValueError("max_options cannot exceed 6")
-        if not 0 <= mcq_probability <= 1:
-            raise ValueError("mcq_probability must be between 0 and 1")
+        if n_repetitions < 1:
+            raise ValueError("n_repetitions must be at least 1")
+        if samples_per_partition < 1:
+            raise ValueError("samples_per_partition must be at least 1")
 
         if openai_kwargs is None:
             openai_kwargs = {}
         if "timeout" not in openai_kwargs:
             openai_kwargs["timeout"] = 300
 
-        super().__init__(
-            input_columns=[input_column],
-            output_columns=["question", "answer"],
-            user_prompt_template=f"Generate a patient case scenario and related question based on the following text: {{{input_column}}}",
-            system_prompt=system_prompt,
-            openai_model=openai_model,
-            openai_api_key=openai_api_key,
-            openai_kwargs=openai_kwargs,
-            max_concurrent_requests=max_concurrent_requests,
-            max_tokens=max_tokens,
-            openai_base_url=openai_base_url,
-        )
+        self.input_column = input_column
+        self.system_prompt = system_prompt
+        self.openai_model = openai_model
+        self.openai_api_key = openai_api_key
+        self.openai_kwargs = openai_kwargs
+        self.max_concurrent_requests = max_concurrent_requests
+        self.max_tokens = max_tokens
+        self.openai_base_url = openai_base_url
         self.min_options = min_options
         self.max_options = max_options
-        self.mcq_probability = mcq_probability
+        self.n_repetitions = n_repetitions
+        self.samples_per_partition = samples_per_partition
+
+    def _generate_demographics(self) -> Dict[str, Any]:
+        """Generate random patient demographics."""
+        # Generate age with different ranges and probabilities
+        age_ranges = [
+            (0.0, 1.0, 0.1),  # Infants (0-1 year, in months)
+            (1.0, 5.0, 0.1),  # Toddlers (1-5 years, in years)
+            (5.0, 18.0, 0.1),  # Children (5-18 years, in years)
+            (18.0, 90.0, 1.0),  # Adults (18-90 years, in years)
+        ]
+        
+        # Weight the probability of each age range
+        weights = [0.15, 0.15, 0.2, 0.5]  # Higher weight for adults
+        selected_range = random.choices(age_ranges, weights=weights)[0]
+        
+        # Generate age within the selected range
+        min_age, max_age, step = selected_range
+        age = round(random.uniform(min_age, max_age), 1)
+        
+        # Format age string based on the range
+        if age < 2.0:
+            age_str = f"{int(age * 12)} months"
+        else:
+            age_str = f"{age} years"
+        
+        # Generate gender
+        gender = random.choice(["male", "female"])
+        
+        return {
+            "age": age,
+            "age_str": age_str,
+            "gender": gender,
+            "pronoun": "he" if gender == "male" else "she",
+            "possessive": "his" if gender == "male" else "her"
+        }
 
     def generate_system_prompt(self, row: pd.Series) -> str:
         """
-        Generates a system prompt that instructs the model to create a patient case scenario
-        and a related question (either multiple-choice or open-ended based on probability).
+        Generates a system prompt that instructs the model to create a patient case scenario.
+        This is the first step in the three-step generation process.
         """
-        is_mcq = random.random() < self.mcq_probability
+        demographics = self._generate_demographics()
+        input_text = row[self.input_column]
         
-        if is_mcq:
-            num_options = random.randint(self.min_options, self.max_options)
-            option_letters = [chr(65 + i) for i in range(num_options)]  # A, B, C, etc.
-            option_template = "\n".join([f"{letter}) [option {letter}]" for letter in option_letters])
-            
-            return f"""You are an expert medical educator specializing in creating realistic patient case scenarios and exam-style questions.
-            Generate a detailed patient case followed by a challenging multiple-choice question with {num_options} options.
+        return f"""You are an expert medical educator specializing in creating realistic patient case scenarios.
+        Generate a detailed patient case based on the following medical concept or topic:
 
-            Guidelines:
-            1. Create a realistic patient presentation that could be encountered in clinical practice
-            2. Include relevant patient information naturally in the narrative
-            3. Focus on broader clinical concepts rather than specific study details
-            4. Make the case challenging but realistic
-            5. Avoid using specific study results or numbers
-            6. Ensure the case is educational and promotes critical thinking
-            7. The case should be understandable without needing to see the original text
-            8. Focus on clinical reasoning and decision-making
-            9. Include realistic patient responses and behaviors
-            10. The question should test clinical reasoning and decision-making
+        {input_text}
 
-            Patient Case Format:
-            Vary your cases significantly in terms of structure and detail level. Some cases should be:
-            - Very detailed with comprehensive history and exam findings
-            - Brief and focused on key presenting symptoms
-            - Medium length with selective important details
-            - Focused on a specific aspect of care
-            - Emphasizing different aspects (history vs exam vs lab results)
-            
-            Vary the inclusion of:
-            - Patient demographics (sometimes include age/gender, sometimes not)
-            - Medical history (sometimes detailed, sometimes minimal)
-            - Physical exam findings (sometimes comprehensive, sometimes focused)
-            - Laboratory results (sometimes included, sometimes omitted)
-            - Social history (sometimes detailed, sometimes brief)
-            - Family history (sometimes included, sometimes omitted)
-            
-            Vary the presentation style:
-            - Some cases should be narrative and story-like
-            - Some should be more clinical and structured
-            - Some should focus on a specific clinical encounter
-            - Some should span multiple visits
-            - Some should be emergency presentations
-            - Some should be routine follow-ups
-            
-            Vary the clinical setting:
-            - Emergency department
-            - Primary care clinic
-            - Specialty consultation
-            - Hospital ward
-            - Community health center
-            - Telemedicine visit
-            
-            Format your response EXACTLY as follows:
-            ```markdown
-            Patient Case:
-            [Write a natural narrative describing the patient's situation, including relevant history and findings]
+        Patient Demographics:
+        - Age: {demographics['age_str']}
+        - Gender: {demographics['gender']}
+        - Pronoun: {demographics['pronoun']}
+        - Possessive: {demographics['possessive']}
 
-            Question:
+        Guidelines:
+        1. Create a realistic patient presentation that demonstrates the medical concept from the input text
+        2. Include relevant patient information naturally in the narrative
+        3. Focus on clinical aspects directly related to the input text
+        4. Make the case challenging but realistic
+        5. Ensure the case is educational and promotes critical thinking
+        6. The case should be understandable without needing to see the original text
+        7. Focus on clinical reasoning and decision-making
+        8. Include realistic patient responses and behaviors
+        9. For pediatric cases, include appropriate developmental context and caregiver interactions
+
+        Format your response EXACTLY as follows:
+        <case>
+        [Write a natural narrative describing the patient's situation, including:
+        - Presenting complaint
+        - Relevant history
+        - Key findings
+        - Any other relevant details]
+        </case>
+        """
+
+    def generate_mcq_prompt(self, patient_case: str, input_text: str) -> str:
+        """
+        Generates a prompt for creating a multiple choice question based on the patient case.
+        This is the second step in the three-step generation process.
+        """
+        num_options = random.randint(self.min_options, self.max_options)
+        option_letters = [chr(65 + i) for i in range(num_options)]  # A, B, C, etc.
+        option_template = "\n".join([f"{letter}) [option {letter}]" for letter in option_letters])
+        
+        return f"""Based on the following patient case and medical concept, generate a challenging multiple-choice question with {num_options} options.
+
+        Medical Concept:
+        {input_text}
+
+        Patient Case:
+        {patient_case}
+
+        Guidelines:
+        1. The question should test clinical reasoning and decision-making related to the medical concept
+        2. Include one correct answer and {num_options-1} plausible but incorrect options
+        3. Each option should be well-reasoned and require careful consideration
+        4. The correct answer should not be immediately obvious
+        5. Consider including options that test common misconceptions about the medical concept
+        6. The question should be challenging but answerable based on the case
+            
+        Format your response EXACTLY as follows:
+        <question>
             [A challenging multiple-choice question based on the case]
 
             {option_template}
-
-            Reasoning:
-            [Provide a detailed reasoning dialogue that:
-            1. Starts with the key findings from the case
-            2. Discusses the differential diagnosis
-            3. Explains why each option is plausible or not
-            4. Identifies the most likely diagnosis
-            5. Justifies the final answer with clear clinical reasoning
-            The reasoning should be a natural dialogue that leads directly to the answer]
-
-            Answer: [correct option letter]
-            Explanation: [brief explanation of why this is the correct answer]
-            ```
-            """
-        else:
-            return """You are an expert medical educator specializing in creating realistic patient case scenarios and exam-style questions.
-            Generate a detailed patient case followed by a challenging open-ended question.
-
-            Guidelines:
-            1. Create a realistic patient presentation that could be encountered in clinical practice
-            2. Include relevant patient information naturally in the narrative
-            3. Focus on broader clinical concepts rather than specific study details
-            4. Make the case challenging but realistic
-            5. Avoid using specific study results or numbers
-            6. Ensure the case is educational and promotes critical thinking
-            7. The case should be understandable without needing to see the original text
-            8. Focus on clinical reasoning and decision-making
-            9. Include realistic patient responses and behaviors
-            10. The question should require critical thinking and analysis
-
-            Patient Case Format:
-            Vary your cases significantly in terms of structure and detail level. Some cases should be:
-            - Very detailed with comprehensive history and exam findings
-            - Brief and focused on key presenting symptoms
-            - Medium length with selective important details
-            - Focused on a specific aspect of care
-            - Emphasizing different aspects (history vs exam vs lab results)
-            
-            Vary the inclusion of:
-            - Patient demographics (sometimes include age/gender, sometimes not)
-            - Medical history (sometimes detailed, sometimes minimal)
-            - Physical exam findings (sometimes comprehensive, sometimes focused)
-            - Laboratory results (sometimes included, sometimes omitted)
-            - Social history (sometimes detailed, sometimes brief)
-            - Family history (sometimes included, sometimes omitted)
-            
-            Vary the presentation style:
-            - Some cases should be narrative and story-like
-            - Some should be more clinical and structured
-            - Some should focus on a specific clinical encounter
-            - Some should span multiple visits
-            - Some should be emergency presentations
-            - Some should be routine follow-ups
-            
-            Vary the clinical setting:
-            - Emergency department
-            - Primary care clinic
-            - Specialty consultation
-            - Hospital ward
-            - Community health center
-            - Telemedicine visit
-            
-            Format your response EXACTLY as follows:
-            ```markdown
-            Patient Case:
-            [Write a natural narrative describing the patient's situation, including relevant history and findings]
-
-            Question:
-            [A challenging open-ended question based on the case]
-
-            Reasoning:
-            [Provide a detailed reasoning dialogue that:
-            1. Starts with the key findings from the case
-            2. Discusses the relevant clinical concepts
-            3. Explains the thought process step by step
-            4. Considers different aspects of the problem
-            5. Builds a logical argument that leads to the answer
-            The reasoning should be a natural dialogue that demonstrates clinical thinking]
-
-            Answer: [detailed answer that includes reasoning and explanation]
-            Explanation: [comprehensive explanation using only general medical knowledge]
-            ```
-            """
-
-    def extract_content(self, response_content: str) -> Dict[str, Any]:
+        </question>
         """
-        Extracts the patient case and answer components from the OpenAI response.
-        Returns a dictionary with empty strings if there's an error in extraction.
+
+    def generate_cot_prompt(self, patient_case: str, question: str, options: List[str], input_text: str) -> str:
         """
+        Generates a prompt for creating chain-of-thought reasoning for the question.
+        This is the third step in the three-step generation process.
+        """
+        return f"""Based on the following patient case, question, and medical concept, provide a detailed chain-of-thought reasoning
+        that leads to the correct answer. Structure your reasoning using XML elements for each step.
+
+        Medical Concept:
+        {input_text}
+
+        Patient Case:
+        {patient_case}
+
+        Question:
+        {question}
+
+        Options:
+        {chr(10).join(options)}
+
+        Guidelines:
+        1. Start with the key findings from the case
+        2. Discuss the differential diagnosis
+        3. Explain why each option is plausible or not
+        4. Identify the most likely diagnosis
+        5. Justify the final answer with clear clinical reasoning
+        6. The reasoning should be a natural dialogue that leads directly to the answer
+        7. Use XML elements to structure each step of your reasoning
+        8. Ensure the reasoning directly relates to the medical concept from the input text
+            
+        Format your response EXACTLY as follows:
+        <thinking>
+        <key_findings>
+        [List and analyze the key findings from the case]
+        </key_findings>
+
+        <differential_diagnosis>
+        [List and discuss potential diagnoses based on the findings]
+        </differential_diagnosis>
+
+        <option_analysis>
+        [Analyze each option in detail:
+        A) [Analysis of option A]
+        B) [Analysis of option B]
+        C) [Analysis of option C]
+        ...]
+        </option_analysis>
+
+        <clinical_reasoning>
+        [Provide step-by-step clinical reasoning that:
+        1. Connects the findings to the diagnosis
+        2. Explains why other options are less likely
+        3. Justifies the final answer]
+        </clinical_reasoning>
+
+        <conclusion>
+        [Summarize the reasoning and state the final answer]
+        </conclusion>
+        </thinking>
+
+        <answer>
+        [correct option letter]
+        </answer>
+        """
+
+    def _extract_case(self, response_content: str) -> str:
+        """Extract the patient case from the response."""
         try:
-            # Split the response into lines and clean them
             lines = [line.strip() for line in response_content.split('\n') if line.strip()]
+            case = []
+            in_case = False
             
-            case_parts = []
-            question = None
+            for line in lines:
+                if line.startswith('<case>'):
+                    in_case = True
+                    continue
+                elif line.startswith('</case>'):
+                    break
+                elif in_case:
+                    case.append(line)
+            
+            return "\n".join(case) if case else ""
+        except Exception:
+            return ""
+
+    def _extract_question_and_options(self, response_content: str) -> Tuple[str, List[str]]:
+        """Extract the question and options from the response."""
+        try:
+            lines = [line.strip() for line in response_content.split('\n') if line.strip()]
+            question = []
             options = []
-            reasoning = None
-            answer = None
-            explanation = None
-            current_section = None
+            in_question = False
             
-            for i, line in enumerate(lines):
-                if line.startswith('Patient Case:'):
-                    current_section = 'case'
+            for line in lines:
+                if line.startswith('<question>'):
+                    in_question = True
                     continue
-                elif line.startswith('Question:'):
-                    current_section = 'question'
-                    question = line.replace('Question:', '').strip()
-                    continue
-                elif line.startswith('Reasoning:'):
-                    current_section = 'reasoning'
-                    reasoning = line.replace('Reasoning:', '').strip()
-                    continue
-                elif line.startswith('Answer:'):
-                    current_section = 'answer'
-                    answer = line.replace('Answer:', '').strip()
-                    continue
-                elif line.startswith('Explanation:'):
-                    current_section = 'explanation'
-                    explanation = line.replace('Explanation:', '').strip()
-                    continue
-                
-                if current_section == 'case':
-                    case_parts.append(line)
-                elif current_section == 'question':
-                    # Check if this line is part of the question or an option
+                elif line.startswith('</question>'):
+                    break
+                elif in_question:
                     if any(line.startswith(f"{chr(65 + i)})") for i in range(26)):
                         options.append(line)
-                    elif not question:  # If we haven't found the question yet
-                        question = line
-                elif current_section == 'reasoning' and not reasoning:
-                    reasoning = line
-                elif current_section == 'answer' and not answer:
-                    answer = line
-                elif current_section == 'explanation' and not explanation:
-                    explanation = line
+                    else:
+                        question.append(line)
             
-            # Format the question with options if they exist
-            formatted_question = question or ""
-            if options:
-                formatted_question = f"{formatted_question}\n" + "\n".join(options)
+            return "\n".join(question), options
+        except Exception:
+            return "", []
+
+    def _extract_reasoning_and_answer(self, response_content: str) -> Tuple[str, str]:
+        """Extract the reasoning and answer from the response."""
+        try:
+            # Split the content into thinking and answer sections
+            thinking_section = ""
+            answer = ""
             
-            # Combine all case details into a single question
-            final_question = "Patient Case:\n\n" + "\n".join(case_parts) + "\n\nQuestion:\n" + formatted_question
+            # Find the thinking section
+            thinking_start = response_content.find("<thinking>")
+            thinking_end = response_content.find("</thinking>")
+            if thinking_start != -1 and thinking_end != -1:
+                thinking_section = response_content[thinking_start:thinking_end + len("</thinking>")]
             
-            # Combine reasoning, answer, and explanation into a single answer
-            final_answer = []
-            if reasoning:
-                final_answer.append(f"Reasoning: {reasoning}")
-            final_answer.append(f"Answer: {answer or ''}")
-            if explanation:
-                final_answer.append(f"Explanation: {explanation}")
+            # Find the answer section
+            answer_start = response_content.find("<answer>")
+            answer_end = response_content.find("</answer>")
+            if answer_start != -1 and answer_end != -1:
+                answer = response_content[answer_start + len("<answer>"):answer_end].strip()
             
-            # Ensure we have valid content
-            if not final_question.strip() or not final_answer:
-                return {"question": "", "answer": ""}
+            if not thinking_section or not answer:
+                logger.error(f"Missing sections in response. Thinking section: {bool(thinking_section)}, Answer: {answer}")
+                return "", ""
             
-            result = {
-                "question": final_question,
-                "answer": "\n\n".join(final_answer)
-            }
-            
-            return result
+            return thinking_section, answer
         except Exception as e:
-            return {"question": "", "answer": ""} 
+            logger.error(f"Error extracting reasoning and answer: {e}")
+            logger.error(f"Response content: {response_content[:500]}...")  # Log first 500 chars of response
+            return "", ""
+
+    def _get_randomized_kwargs(self) -> Dict[str, Any]:
+        """Get OpenAI kwargs with randomized temperature."""
+        kwargs = self.openai_kwargs.copy()
+        kwargs["temperature"] = random.uniform(0.4, 0.5)
+        return kwargs
+
+    def _log_generation_failure(self, step: str, error: Exception, input_text: str) -> None:
+        """Log a warning when generation fails."""
+        logger.warning(
+            f"Failed to generate {step} for input: {input_text[:100]}... Error: {str(error)}"
+        )
+
+    def process(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Process the input DataFrame to generate patient cases, questions, reasoning, and answers.
+        Uses map_partitions to handle Dask DataFrames and limits processing to samples_per_partition samples per partition.
+        """
+        import asyncio
+        from openai import AsyncOpenAI
+        from typing import List
+
+        async def process_row(client: AsyncOpenAI, row: pd.Series) -> List[Dict[str, str]]:
+            results = []
+            for rep_idx in range(self.n_repetitions):
+                try:
+                    input_text = row[self.input_column]
+                    kwargs = self._get_randomized_kwargs()
+                    
+                    # Step 1: Generate patient case
+                    prompt = self.generate_system_prompt(row)
+                    case_response = await client.chat.completions.create(
+                        model=self.openai_model,
+                        messages=[
+                            {"role": "user", "content": prompt},
+                        ],
+                        **kwargs,
+                    )
+                    case = self._extract_case(case_response.choices[0].message.content)
+                    if not case:
+                        raise ValueError("Failed to extract patient case")
+
+                    # Step 2: Generate MCQ
+                    mcq_prompt = self.generate_mcq_prompt(case, input_text)
+                    mcq_response = await client.chat.completions.create(
+                        model=self.openai_model,
+                        messages=[
+                            {"role": "user", "content": mcq_prompt},
+                        ],
+                        **kwargs,
+                    )
+                    question, options = self._extract_question_and_options(mcq_response.choices[0].message.content)
+                    if not question or not options:
+                        raise ValueError("Failed to extract question and options")
+
+                    # Step 3: Generate reasoning and answer
+                    cot_prompt = self.generate_cot_prompt(case, question, options, input_text)
+                    cot_response = await client.chat.completions.create(
+                        model=self.openai_model,
+                        messages=[
+                            {"role": "user", "content": cot_prompt},
+                        ],
+                        **kwargs,
+                    )
+                    reasoning, answer = self._extract_reasoning_and_answer(cot_response.choices[0].message.content)
+                    if not reasoning or not answer:
+                        print(cot_response.choices[0].message.content)
+                        raise ValueError("Failed to extract reasoning and answer")
+
+                    results.append({
+                        "case": case,
+                        "question": f"{question}\n" + "\n".join(options),
+                        "reasoning": reasoning,
+                        "answer": answer
+                    })
+                except Exception as e:
+                    self._log_generation_failure(f"repetition {rep_idx + 1}", e, input_text)
+                    results.append(None)
+            return results
+
+        async def process_partition(partition: pd.DataFrame) -> pd.DataFrame:
+            # Sample the partition if it's larger than samples_per_partition
+            if len(partition) > self.samples_per_partition:
+                partition = partition.sample(n=self.samples_per_partition, random_state=42)
+                logger.info(f"Sampled {self.samples_per_partition} rows from partition for processing")
+
+            client = AsyncOpenAI(api_key=self.openai_api_key, base_url=self.openai_base_url)
+            semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+            
+            async def process_with_semaphore(row: pd.Series):
+                async with semaphore:
+                    return await process_row(client, row)
+            
+            tasks = [process_with_semaphore(row) for _, row in partition.iterrows()]
+            results = await asyncio.gather(*tasks)
+            
+            # Create output DataFrame for this partition
+            flattened_results = []
+            for row_idx, row_results in enumerate(results):
+                for rep_idx, result in enumerate(row_results):
+                    if result is None:
+                        continue
+                    flattened_results.append({
+                        **result,
+                        "repetition_index": str(rep_idx)  # Convert to string
+                    })
+            
+            if not flattened_results:
+                return pd.DataFrame(columns=["filename", "case", "question", "reasoning", "answer", "repetition_index"])
+            
+            # Create output DataFrame with new indices
+            output_df = pd.DataFrame(flattened_results)
+            
+            # Create a new DataFrame with just the filename column
+            filename_df = partition[["filename"]].reset_index(drop=True)
+            
+            # Create a new DataFrame with the same number of rows as output_df
+            # by repeating the filename rows for each repetition
+            repeated_filenames = pd.DataFrame({
+                "filename": filename_df["filename"].repeat(self.n_repetitions).reset_index(drop=True)
+            })
+            
+            # Combine the repeated filenames with the output data
+            result_df = pd.concat([repeated_filenames, output_df], axis=1)
+            
+            # Ensure all columns are of string type
+            for col in ["filename", "case", "question", "reasoning", "answer", "repetition_index"]:
+                if col in result_df.columns:
+                    result_df[col] = result_df[col].astype(str)
+            
+            return result_df
+
+        def sync_process_partition(partition: pd.DataFrame) -> pd.DataFrame:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(process_partition(partition))
+            finally:
+                loop.close()
+
+        # Define metadata for the output DataFrame
+        meta = pd.DataFrame(columns=["filename", "case", "question", "reasoning", "answer", "repetition_index"])
+        
+        # Apply map_partitions
+        return df.map_partitions(
+            sync_process_partition,
+            meta=meta,
+            enforce_metadata=True
+        ) 

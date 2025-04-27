@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-from j1.pipeline.mappers import PromptMapper
+from j1.process.mappers import PromptMapper
 
 
 # --- Fixtures ---

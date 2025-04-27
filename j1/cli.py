@@ -2,30 +2,69 @@ import asyncio
 import importlib
 import json
 import yaml
+import os
 from pathlib import Path
 from typing import Any, Dict, Type
+import re
 
 import click
 import dask.dataframe as dd
 from dask.diagnostics import ProgressBar
+from dotenv import load_dotenv
 
 from .data_loaders.base import BaseDataLoader
 from .pipelines.base import Pipeline
+from .eval.medqa import MultiModelEvaluator
+
+
+def load_env_vars():
+    """Load environment variables from .env file."""
+    env_path = Path('.env')
+    if env_path.exists():
+        load_dotenv(env_path)
+    else:
+        click.echo("Warning: .env file not found. Using system environment variables.", err=True)
+
+
+def substitute_env_vars(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively substitute environment variables in the configuration."""
+    if isinstance(config, dict):
+        return {k: substitute_env_vars(v) for k, v in config.items()}
+    elif isinstance(config, list):
+        return [substitute_env_vars(item) for item in config]
+    elif isinstance(config, str):
+        # Match ${VAR_NAME} pattern
+        env_var_pattern = r'\${([^}]+)}'
+        matches = re.findall(env_var_pattern, config)
+        if matches:
+            for var_name in matches:
+                env_value = os.getenv(var_name)
+                if env_value is None:
+                    raise ValueError(f"Environment variable {var_name} not found")
+                config = config.replace(f"${{{var_name}}}", env_value)
+        return config
+    return config
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
-    """Load configuration from YAML or JSON file."""
+    """Load configuration from YAML or JSON file and substitute environment variables."""
+    # First load environment variables
+    load_env_vars()
+    
     path = Path(config_path)
     if not path.exists():
         raise click.BadParameter(f"Config file {config_path} does not exist")
     
     with open(path) as f:
         if path.suffix.lower() in ['.yaml', '.yml']:
-            return yaml.safe_load(f)
+            config = yaml.safe_load(f)
         elif path.suffix.lower() == '.json':
-            return json.load(f)
+            config = json.load(f)
         else:
             raise click.BadParameter(f"Unsupported config file format: {path.suffix}")
+    
+    # Substitute environment variables
+    return substitute_env_vars(config)
 
 
 def get_loader_class(loader_path: str) -> Type[BaseDataLoader]:
@@ -123,6 +162,53 @@ def run_pipeline(config: str):
     except Exception as e:
         click.echo(f"Error running pipeline: {e}", err=True)
         raise click.Abort()
+
+
+@cli.command()
+@click.option('--config', type=click.Path(exists=True), required=True, help='Path to the evaluation configuration file')
+@click.option('--output', type=click.Path(), help='Path to save the results CSV file')
+def evaluate(config, output):
+    """Run an evaluation using the specified configuration."""
+    try:
+        # Load configuration with environment variable substitution
+        config_data = load_config(config)
+        
+        # Get benchmark type
+        benchmark_type = config_data.get("benchmark_type")
+        if not benchmark_type:
+            raise ValueError("benchmark_type must be specified in the config")
+        
+        # Import appropriate evaluator
+        if benchmark_type == "medqa":
+            from .eval.medqa import MedQAEvaluator, MultiModelEvaluator
+            evaluator_class = MedQAEvaluator
+        elif benchmark_type == "pubmedqa":
+            from .eval.pubmedqa import PubMedQAEvaluator
+            from .eval.medqa import MultiModelEvaluator
+            evaluator_class = PubMedQAEvaluator
+        else:
+            raise ValueError(f"Unknown benchmark type: {benchmark_type}")
+        
+        # Create evaluator
+        evaluator = MultiModelEvaluator(config_data, evaluator_class)
+        
+        # Run evaluation
+        print("Starting evaluation for all models...")
+        results = asyncio.run(evaluator.evaluate_all())
+        
+        # Generate and print summary
+        evaluator.print_summary(results)
+        
+        # Save results if output path is specified
+        if output:
+            # Generate comparative report
+            comparative_report = evaluator.generate_comparative_report(results)
+            comparative_report.to_csv(output, index=False)
+            print(f"Results saved to {output}")
+        
+    except Exception as e:
+        print(f"Error during evaluation: {str(e)}")
+        raise e
 
 
 def main():
