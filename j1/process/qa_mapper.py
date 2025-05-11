@@ -215,38 +215,10 @@ class PatientMapper(Processor):
         8. Ensure the reasoning directly relates to the medical concept from the input text
             
         Format your response EXACTLY as follows:
-        <thinking>
-        <key_findings>
-        [List and analyze the key findings from the case]
-        </key_findings>
-
-        <differential_diagnosis>
-        [List and discuss potential diagnoses based on the findings]
-        </differential_diagnosis>
-
-        <option_analysis>
-        [Analyze each option in detail:
-        A) [Analysis of option A]
-        B) [Analysis of option B]
-        C) [Analysis of option C]
-        ...]
-        </option_analysis>
-
-        <clinical_reasoning>
-        [Provide step-by-step clinical reasoning that:
-        1. Connects the findings to the diagnosis
-        2. Explains why other options are less likely
-        3. Justifies the final answer]
-        </clinical_reasoning>
-
-        <conclusion>
-        [Summarize the reasoning and state the final answer]
-        </conclusion>
-        </thinking>
-
-        <answer>
-        [correct option letter]
-        </answer>
+        <think>
+        [reasoning]
+        </think>
+        [answer]
         """
 
     def _extract_case(self, response_content: str) -> str:
@@ -301,7 +273,7 @@ class PatientMapper(Processor):
             answer = ""
             
             # Find the thinking section
-            thinking_start = response_content.find("<thinking>")
+            thinking_start = response_content.find("<think>")
             thinking_end = response_content.find("</thinking>")
             if thinking_start != -1 and thinking_end != -1:
                 thinking_section = response_content[thinking_start:thinking_end + len("</thinking>")]

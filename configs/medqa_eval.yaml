@@ -122,13 +122,12 @@ models:
     model: "J1"
     api_base: "http://localhost:8000/v1"
     api_key: "@"
-    max_concurrent_requests: 100
+    max_concurrent_requests: 200
     use_chain_of_thought: false
     params:
-      temperature: 0.6
-      max_tokens: 4000
+      temperature: 0.65
+      max_tokens: 16000
+      top_p: 0.95
+      repetition_penalty: 2
 # Path to the JSON dataset file
 dataset_path: "data/medqa.jsonl"
-
-# Optional: Limit the number of evaluations
-limit: 1000 # Set to null or remove to evaluate all items

@@ -79,26 +79,11 @@ class MedQAPrompt:
             
         options_text = "\n".join([f"{key}) {value}" for key, value in self.options.items()])
         
-        if self.use_chain_of_thought:
-            return f"""You are a medical expert. Please answer the following question by selecting the most appropriate option.
+        return f"""{self.question}
 
-Question: {self.question}
-
-Options:
 {options_text}
 
-Please follow these steps:
-1. First, explain your reasoning step by step
-2. Then, provide your final answer in the following format:
-Answer: <letter>
-
-For example:
-1. The patient is experiencing symptoms X and Y
-2. Based on medical knowledge Z
-3. The most appropriate action is C
-Answer: C"""
-        else:
-            return f"""{self.question}\n{options_text}"""
+ When you want to mention the correct answer please do it in this format: 'The correct answer is: <answer>"""
 
 class MedQAEvaluator(QAEvaluator):
     def create_prompt(self, item: Dict) -> MedQAPrompt:
@@ -110,14 +95,14 @@ class MedQAEvaluator(QAEvaluator):
         )
     
     def extract_answer(self, response: str) -> str:
-        lines = response.strip().split("\n")
-        for line in lines:
-            line = line.replace("*", "").lower()
-            if line.strip().startswith("answer:"):
-                return line.strip().split(":")[1].strip().upper()
-            if line.strip().startswith("the best answer is "):
-                return line.strip().split("is ")[1].strip().replace(".", "").upper()
-        return ""
+        if "</think>" in response:
+            response = response.split("</think>")[1].strip()
+        if "answer is" in response:
+            for chunk in response.split("answer is"):
+                r = chunk.strip().replace(":", "").replace(")", "").replace("*", "").strip().upper()[0].replace(".", "").replace(",", "")
+                if r in ["A", "B", "C", "D", "E"]:
+                    return r
+        return None
     
     def is_correct(self, extracted_answer: str, correct_answer: str) -> bool:
         return extracted_answer == correct_answer

@@ -158,11 +158,7 @@ class QAEvaluator(ABC):
             extracted_answer = self.extract_answer(response)
             is_correct = self.is_correct(extracted_answer, item.get("answer_idx", item.get("final_decision")))
             
-            if not extracted_answer:
-                print(response)
-                logger.warning(f"Model {self.label}: No answer found in response")
-            
-            return {
+            r = {
                 "question": item.get("question", item.get("QUESTION")),
                 "correct_answer": item.get("answer_idx", item.get("final_decision")),
                 "model_answer": extracted_answer,
@@ -171,6 +167,13 @@ class QAEvaluator(ABC):
                 "meta_info": item.get("meta_info", ""),
                 "tokens": tokens
             }
+
+            if not extracted_answer:
+                print(response)
+                logger.warning(f"Model {self.label}: No answer found in response")
+                r["error"] = "No answer found in response"
+            
+            return r
         except Exception as e:
             logger.warning(f"Model {self.label}: Evaluation failed - {str(e)}")
             return {
